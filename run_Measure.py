@@ -12,6 +12,26 @@ year = now.year
 month = now.month
 day = now.day
 
+# excel 데이터에서 심박, 호흡, 산포도의 평균을 구하는 함수
+# 조건1) 평균을 구하는 값은 오전 8 ~ 오전 9시 데이터
+# 조건2) 평균 계산 시 값이 0인 값들이 있으면 제외
+
+def get_average_data():
+    script_dir = os.path.dirname(os.path.abspath(__file__))  # 현재 스크립트 파일의 경로
+    data_dir = os.path.join(script_dir, "HospitalData") 
+    json_dir = os.path.join(script_dir,"json")  # JSON 파일들이 들어있는 폴더 경로
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    for filename in os.listdir(json_dir):
+        if filename.endswith(".json"):
+            # 병원명 추출 (예: 'Yn_Uid_Filename.json' → 'Yn')
+            hospital_name = filename.split('_')[0].upper()  # 대문자로 통일: 'YN', 'HYO', 'JJ' 등
+            #print(f"??{hospital_name}")
+            for hospital_filename in os.listdir(data_dir):
+                if hospital_filename == hospital_name:
+                    if 
+                    
+
 def fetch_prometheus_metrics(job_name, metrics, start_time, end_time, step=10, timezone_offset=9, output_csv=None, room_id=None):
     """
     Parameters:
@@ -126,19 +146,58 @@ def save_all_hospital_data():
 
                 # 엑셀로 데이터 저장
                 df.to_csv(os.path.join(base_path, f"{year}.{month}.{day}_{room_id}_{uid_value}.csv"))
-    print("stop thread")           
+
+# 입력 시간으로 데이터를 추출 및 저장하는 함수
+def save_input_hospital_data():
+     # input hospital code
+    base_json_dir = 'json'
+    hospital_code = input("병원 코드를 입력하세요 (ex: hyo, jj, yn): ").strip()
+
+    for filename in os.listdir(base_json_dir):
+        if filename.endswith('_uid_list.json'):
+            file_head = filename.split('_')[0] # [yn,hyo,jj]
+            if hospital_code == file_head:
+                # 해당하는 병원의 json 파일 url 만들기 및 load
+                file_path = ('json/' + hospital_code.lower() + '_uid_list.json')
+                #print(f"??{file_path}")
+
+                input_str = input("시간을 입력하세요 (예: 20250520 0900): ")
+                input_datetime = datetime.strptime(input_str, "%Y%m%d %H%M")
+                yesterday_datetime = input_datetime - timedelta(days=1)
+
+                output_csv1 = input("엑셀 저장 경로를 입력하세요 :")
+                #오늘 날짜 현재 경로
+                
+                uid_data = load_json(file_path)
+
+                for room_id, uid in uid_data.items():
+                    job_name = uid.split('/')[0]  # job name : '21b7'
+                    uid_value = uid.split('/')[1]  # uid : '0559E31031701'
+                    job_name1= (job_name + '/' + uid_value )
+                
+                    df = fetch_prometheus_metrics(
+                        job_name= (job_name + '/' + uid_value ),
+                        metrics=metrics,
+                        start_time=yesterday_datetime,
+                        end_time=input_datetime,
+                        step=10,
+                        output_csv=output_csv1,
+                        room_id =room_id,
+                    )
    
 # run_scheduler 함수
 def run_scheduler():
     while True:
         schedule.run_pending()
-        time.sleep(1)                                        
+        time.sleep(1)   
+
 # json 파일 열기
 def load_json(file_path):
     if not os.path.exists(file_path):
         return {}
     with open(file_path, 'r', encoding='utf-8') as f:
-        return json.load(f)    
+        return json.load(f)
+        
 # json 파일 저장
 def save_json(file_name, data):
     # 폴더 경로 생성
@@ -158,6 +217,7 @@ def add_or_change_uid(file_path,room_id,uid):
     data[room_id] = uid
     save_json(file_path, data)
     print(f"[INFO] UID '{uid}' has been added/updated.")
+
 #json 파일 삭제
 def delete_json(file_path,room_id):
     data = load_json(file_path)
@@ -167,6 +227,7 @@ def delete_json(file_path,room_id):
         print(f"[INFO] UID '{room_id}' has been deleted.")
     else:
         print(f"[WARN] UID '{room_id}' not found.")
+
 # -------------------------
 # 실행 구문
 # -------------------------
@@ -176,30 +237,25 @@ if __name__ == "__main__":
     today_9am = datetime.now(tz=kst).replace(hour=9, minute=0, second=0, microsecond=0)
     yesterday_9am = today_9am - timedelta(days=1)
 
-   
-
     # metric 및 job 설정
     metrics = [
         'radar_v3_state', 'radar_v3_heart_detection', 'radar_v3_heart',
         'radar_v3_breath', 'radar_v3_sp02', 'radar_v3_drop', 'radar_v3_radar_rssi'
     ]
     
-     # 아침 9시 반, 데이터 저장
-    #save_all_hospital_data()
-    schedule.every().day.at("09:18").do(save_all_hospital_data)
-    #job = schedule.every(2).seconds.do(save_all_hospital_data)
-    #schedule.every(2).seconds.do(message2,'2초마다 알려줄게요')
+    get_average_data()
+     # At 9:10 save all hospital data
+    # Keep the main thread alive so the scheduler can run
+    schedule.every().day.at("14:50").do(save_all_hospital_data)
     thread = threading.Thread(target=run_scheduler)
     thread.daemon = True
     thread.start()
 
-    # Keep the main thread alive so the scheduler can run
-    #count =0
-    '''
+    
     while True:
-        command = input("명령어를 입력하세요 (exit 입력 시 종료): ").strip()
-        if command == "metrics":
-            fetch_prometheus_metrics()
+        command = input("명령어를 입력하세요 (command 입력 시 데이터 다운로드) (exit 입력 시 종료): ").strip()
+        if command == "command":
+            save_input_hospital_data()
         elif command == "exit":
             print("프로그램 종료 중...")
             break
@@ -207,36 +263,9 @@ if __name__ == "__main__":
             print("알 수 없는 명령어입니다.")
 
     print("메인 루프 종료, 프로그램 종료.")
-    '''
-    #------------------------------input 받아서 데이터 저장하는 코드-------------------------------------------------   
-    # 병원 코드 입력
-    base_json_dir = 'json'
-    hospital_code = input("병원 코드를 입력하세요 (예: hyo, jj): ").strip()
-
-    for filename in os.listdir(base_json_dir):
-        if filename.endswith('_uid_list.json'):
-            file_head = filename.split('_')[0] # [yn,hyo,jj]
-            if hospital_code == file_head:
-                # 해당하는 병원의 json 파일 url 만들기 및 load
-                file_path = ('json/' + hospital_code.lower() + '_uid_list.json')
-                print(f"??{file_path}")
-                output_csv1 = input("엑셀 저장 경로를 입력하세요 :")
-                uid_data = load_json(file_path)
-
-                for room_id, uid in uid_data.items():
-                    job_name = uid.split('/')[0]  # job name : '21b7'
-                    uid_value = uid.split('/')[1]  # uid : '0559E31031701'
-                    job_name1= (job_name + '/' + uid_value )
-                
-                    df = fetch_prometheus_metrics(
-                        job_name= (job_name + '/' + uid_value ),
-                        metrics=metrics,
-                        start_time=yesterday_9am,
-                        end_time=today_9am,
-                        step=10,
-                        output_csv=output_csv1,
-                        room_id =room_id,
-                    )
+      
+    
+   
 
 
 
