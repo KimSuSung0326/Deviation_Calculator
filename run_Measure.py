@@ -25,99 +25,106 @@ import re
 import csv
 from datetime import datetime, timedelta
 
+# 현재는 scheduler를 통해 다운받은 데이터를 7~8, 15~ 16 시간대 평균 계산 
 def get_average_data():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(script_dir, "HospitalData") 
+    data_dir = os.path.join(script_dir, "HospitalData")
     json_dir = os.path.join(script_dir, "json")
 
-    try:
-        input_str = input("평균을 구할 시간을 입력하세요 (예: 2025-05-20 09:00): ")
-        input_datetime = datetime.strptime(input_str, "%Y-%m-%d %H:%M")
-    except ValueError:
-        print("입력 형식이 잘못되었습니다. 예: 2025-05-20 09:00")
-        return [], [], [], []
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
 
-    start_time = input_datetime - timedelta(hours=1)
-    today_str = input_datetime.strftime("%Y-%m-%d")
+    target_times = [
+        datetime.strptime(f"{today_str} 08:00", "%Y-%m-%d %H:%M"),
+        datetime.strptime(f"{today_str} 16:00", "%Y-%m-%d %H:%M")
+    ]
 
-    all_avg_hr = []
-    all_avg_breath = []
-    all_avg_spo2 = []
-    room_id_list = []
+    # 병원별로 저장할 전체 결과 딕셔너리
+    hospital_results = {}
 
     for filename in os.listdir(json_dir):
         if filename.endswith(".json"):
             hospital_name = filename.split('_')[0].upper()
 
+            results = {
+                "08:00": {"hr": [], "breath": [], "spo2": [], "rooms": []},
+                "16:00": {"hr": [], "breath": [], "spo2": [], "rooms": []},
+            }
 
-            for hospital_folder in os.listdir(data_dir):
-                if hospital_folder == hospital_name:
-                    hospital_base_dir = os.path.join(data_dir, hospital_name)
-                    today_date_dir = os.path.join(hospital_base_dir, today_str)
+            hospital_base_dir = os.path.join(data_dir, hospital_name)
+            today_date_dir = os.path.join(hospital_base_dir, today_str)
 
-                    if not os.path.isdir(today_date_dir):
-                        print(f"{hospital_name}의 오늘 날짜 폴더 없음: {today_date_dir}")
-                        continue
+            if not os.path.isdir(today_date_dir):
+                print(f"[{hospital_name}] 오늘 날짜 폴더 없음: {today_date_dir}")
+                continue
 
-                    print(f"{hospital_name}의 오늘 날짜 폴더 존재: {today_date_dir}")
+            print(f"[{hospital_name}] 오늘 날짜 폴더 존재: {today_date_dir}")
 
-                    for data_file in os.listdir(today_date_dir):
-                        if data_file.endswith(".csv"):
-                            print(f"처리 중: {data_file}")
+            for data_file in os.listdir(today_date_dir):
+                if not data_file.endswith(".csv"):
+                    continue
 
-                            # 각 파일별 리스트 초기화
-                            hr_list = []
-                            breath_list = []
-                            spo2_list = []
+                print(f"[{hospital_name}] 처리 중: {data_file}")
 
-                            match = re.search(r"^(\d+_\d+)_", data_file)
-                            room_id = match.group(1) if match else "Unknown"
+                match = re.search(r"^\d+\.\d+\.\d+_(\d+)_(\d+)_", data_file)
+                if match:
+                    room_id = f"{match.group(1)}_{match.group(2)}"
+                else:
+                    print(f"[{hospital_name}] 파일명에서 room_id 추출 실패: {data_file}")
+                    continue
 
-                            file_path = os.path.join(today_date_dir, data_file)
+                file_path = os.path.join(today_date_dir, data_file)
 
-                            with open(file_path, 'r', encoding='utf-8') as csvfile:
-                                reader = csv.reader(csvfile, delimiter=',')
-                                next(reader, None)  # 헤더 스킵
+                for target_time in target_times:
+                    start_time = target_time - timedelta(hours=1)
+                    time_key = target_time.strftime("%H:%M")
 
-                                for i, row in enumerate(reader):
-                                    try:
-                                        timestamp_str = row[0].strip()
-                                        full_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-                                        timestamp = full_timestamp.replace(second=0)
+                    hr_list = []
+                    breath_list = []
+                    spo2_list = []
 
-                                        if not (start_time <= timestamp <= input_datetime):
-                                            continue
+                    with open(file_path, 'r', encoding='utf-8') as csvfile:
+                        reader = csv.reader(csvfile, delimiter=',')
+                        next(reader, None)  # skip header
 
-                                        hr = int(row[3])
-                                        breath = int(row[4])
-                                        spo2 = int(row[5])
+                        for i, row in enumerate(reader):
+                            try:
+                                timestamp_str = row[0].strip()
+                                full_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                                timestamp = full_timestamp.replace(second=0)
 
-                                        if hr != 0:
-                                            hr_list.append(hr)
-                                        if breath != 0:
-                                            breath_list.append(breath)
-                                        if spo2 != 0:
-                                            spo2_list.append(spo2)
+                                if not (start_time <= timestamp <= target_time):
+                                    continue
 
-                                        if i < 5:
-                                            print(f"{i+1}번째 줄: {timestamp_str} → {timestamp}")
+                                hr = int(row[3])
+                                breath = int(row[4])
+                                spo2 = int(row[5])
 
-                                    except (IndexError, ValueError) as e:
-                                        print(f"에러 발생 (줄 {i+1}): {e}")
-                                        continue
+                                if hr != 0:
+                                    hr_list.append(hr)
+                                if breath != 0:
+                                    breath_list.append(breath)
+                                if spo2 != 0:
+                                    spo2_list.append(spo2)
 
-                            avg_hr = int(round(sum(hr_list) / len(hr_list))) if hr_list else 0
-                            avg_breath = int(round(sum(breath_list) / len(breath_list))) if breath_list else 0
-                            avg_spo2 = int(round(sum(spo2_list) / len(spo2_list))) if spo2_list else 0
+                            except (IndexError, ValueError) as e:
+                                print(f"에러 ({hospital_name} {data_file} 줄 {i+1}): {e}")
+                                continue
 
-                            all_avg_hr.append(avg_hr)
-                            all_avg_breath.append(avg_breath)
-                            all_avg_spo2.append(avg_spo2)
-                            room_id_list.append(room_id)
+                    avg_hr = int(round(sum(hr_list) / len(hr_list))) if hr_list else 0
+                    avg_breath = int(round(sum(breath_list) / len(breath_list))) if breath_list else 0
+                    avg_spo2 = int(round(sum(spo2_list) / len(spo2_list))) if spo2_list else 0
 
-                            print(f"{data_file} ({room_id}) 평균 심박: {avg_hr}, 호흡: {avg_breath}, 산소포화도: {avg_spo2}")
+                    results[time_key]["hr"].append(avg_hr)
+                    results[time_key]["breath"].append(avg_breath)
+                    results[time_key]["spo2"].append(avg_spo2)
+                    results[time_key]["rooms"].append(room_id)
 
-    return all_avg_hr, all_avg_breath, all_avg_spo2, room_id_list
+                    print(f"[{hospital_name}] [{time_key}] {room_id} → HR: {avg_hr}, BR: {avg_breath}, SPO2: {avg_spo2}")
+
+            hospital_results[hospital_name] = results
+
+    return hospital_results
 
 def get_average_from_custom_folder():
     try:
@@ -222,6 +229,24 @@ def make_averdata_to_excel(avr_heart, avr_breath, avr_spo2, room_id, filename="a
 
     # excel 스타일 만들기
 
+def make_scheduler_averdata_to_excel_by_hospital(hospital_results):
+    for hospital_name, results in hospital_results.items():
+        data_rows = []
+
+        for time_key in results:
+            for i in range(len(results[time_key]['rooms'])):
+                data_rows.append({
+                    "시간대": time_key,
+                    "room_id": results[time_key]['rooms'][i],
+                    "심박수": results[time_key]['hr'][i],
+                    "호흡수": results[time_key]['breath'][i],
+                    "산소포화도": results[time_key]['spo2'][i],
+                })
+
+        df = pd.DataFrame(data_rows)
+        filename = f"{hospital_name}_averdata.xlsx"
+        df.to_excel(filename, index=False)
+        print(f"[{hospital_name}] 엑셀 저장 완료: {filename}")
 
 
 def fetch_prometheus_metrics(job_name, metrics, start_time, end_time, step=10, timezone_offset=9, output_csv=None, room_id=None):
@@ -298,7 +323,7 @@ def fetch_prometheus_metrics(job_name, metrics, start_time, end_time, step=10, t
         print("데이터가 없습니다.")
         return None
     
-#9시 30분 마다 데이터 저장 함수
+#9시 10분 마다 데이터 저장 함수
 def save_all_hospital_data():
     today_str = datetime.now().strftime("%Y-%m-%d")
     # 엑셀 데이터 저장 경로 설정
@@ -330,8 +355,8 @@ def save_all_hospital_data():
                 df = fetch_prometheus_metrics(
                     job_name= (job_name1 + '/' + uid_value ),
                     metrics=metrics,
-                    start_time=yesterday_9am,  
-                    end_time=today_9am,
+                    start_time=yesterday_16pm,  
+                    end_time=today_16pm,
                     step=10,
                     room_id=room_id
                 )
@@ -339,42 +364,55 @@ def save_all_hospital_data():
                 # 엑셀로 데이터 저장
                 df.to_csv(os.path.join(base_path, f"{year}.{month}.{day}_{room_id}_{uid_value}.csv"))
 
+    # scheduler를 통해 받아온 데이터 평균 계산
+    results = get_average_data()
+    # 엑셀 파일로 저장
+    make_scheduler_averdata_to_excel_by_hospital(results)
+
 # 입력 시간으로 데이터를 추출 및 저장하는 함수
 def save_input_hospital_data():
-     # input hospital code
-    base_json_dir = 'json'
-    hospital_code = input("병원 코드를 입력하세요 (ex: hyo, jj, yn): ").strip()
+    hospital_input = input("병원 코드를 입력하세요 (ex: hyo, jj, yn5): ").strip()
 
-    for filename in os.listdir(base_json_dir):
-        if filename.endswith('_uid_list.json'):
-            file_head = filename.split('_')[0] # [yn,hyo,jj]
-            if hospital_code == file_head:
-                # 해당하는 병원의 json 파일 url 만들기 및 load
-                file_path = ('json/' + hospital_code.lower() + '_uid_list.json')
-                #print(f"??{file_path}")
+    hospital_code = ''.join(filter(str.isalpha, hospital_input))
+    hospital_num = ''.join(filter(str.isdigit, hospital_input))
 
-                input_str = input("시간을 입력하세요 (예: 20250520 0900): ")
-                input_datetime = datetime.strptime(input_str, "%Y%m%d %H%M")
-                yesterday_datetime = input_datetime - timedelta(days=1)
+    if hospital_code == 'yn' and hospital_num:
+        expected_filename = f"{hospital_code}_uid_list_{hospital_num}.json"
+    else:
+        expected_filename = f"{hospital_code}_uid_list.json"
 
-                output_csv1 = input("엑셀 저장 경로를 입력하세요 :")
-                
-                uid_data = load_json(file_path)
+    # 실행 중인 스크립트의 절대 경로 기준으로 경로 설정
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(script_dir, 'json', expected_filename)
 
-                for room_id, uid in uid_data.items():
-                    job_name = uid.split('/')[0]  # job name : '21b7'
-                    uid_value = uid.split('/')[1]  # uid : '0559E31031701'
-                    job_name1= (job_name + '/' + uid_value )
-                
-                    df = fetch_prometheus_metrics(
-                        job_name= (job_name + '/' + uid_value ),
-                        metrics=metrics,
-                        start_time=yesterday_datetime,
-                        end_time=input_datetime,
-                        step=10,
-                        output_csv=output_csv1,
-                        room_id =room_id,
-                    )
+    print(f"filepath : {file_path}")
+
+    if not os.path.exists(file_path):
+        print(f"파일을 찾을 수 없습니다: {file_path}")
+        return
+
+    input_str = input("시간을 입력하세요 (예: 20250520 0900): ")
+    input_datetime = datetime.strptime(input_str, "%Y%m%d %H%M")
+    yesterday_datetime = input_datetime - timedelta(days=1)
+    
+    output_csv1 = input("엑셀 저장 경로를 입력하세요 :")
+
+    uid_data = load_json(file_path)
+
+    for room_id, uid in uid_data.items():
+        job_name = uid.split('/')[0]  # 예: '21b7'
+        uid_value = uid.split('/')[1]  # 예: '0559E31031701'
+        job_name1 = f"{job_name}/{uid_value}"
+    
+        df = fetch_prometheus_metrics(
+            job_name=job_name1,
+            metrics=metrics,
+            start_time=yesterday_datetime,
+            end_time=input_datetime,
+            step=10,
+            output_csv=output_csv1,
+            room_id=room_id,
+        )
    
 # run_scheduler 함수
 def run_scheduler():
@@ -423,51 +461,39 @@ def delete_json(file_path,room_id):
 # 실행 구문
 # -------------------------
 if __name__ == "__main__":
-    # 시간 설정 (KST 기준 어제 9시 ~ 오늘 9시)
+    # 시간 설정 (KST 기준 어제 16시 ~ 오늘 16시)
     kst = timezone(timedelta(hours=9))
-    today_9am = datetime.now(tz=kst).replace(hour=9, minute=0, second=0, microsecond=0)
-    yesterday_9am = today_9am - timedelta(days=1)
-    lhour_ago = today_9am -timedelta(hours=1)
+    today_16pm = datetime.now(tz=kst).replace(hour=16, minute=0, second=0, microsecond=0)
+    yesterday_16pm = today_16pm - timedelta(days=1)
+    lhour_ago = today_16pm -timedelta(hours=1)
     # metric 및 job 설정
     metrics = [
         'radar_v3_state', 'radar_v3_heart_detection', 'radar_v3_heart',
         'radar_v3_breath', 'radar_v3_sp02', 'radar_v3_drop', 'radar_v3_radar_rssi'
     ]
    
-
-    
-
-    #get_average_data()
+    # At 16:10 save all hospital data
+    # Keep the main thread alive so the scheduler can run
+    schedule.every().day.at("17:49").do(save_all_hospital_data)
+    thread = threading.Thread(target=run_scheduler)
+    thread.daemon = True
+    thread.start()
 
     aver_hr=[]
     aver_br = []
     aver_spo2 = []
     room_id_list = []
-
-    #aver_hr, aver_br, aver_spo2 , room_id_list= get_average_data()
-
-    #aver_hr, aver_br, aver_spo2 , room_id_list= get_average_from_custom_folder()
-    #print(f"11{aver_hr}\n,22{aver_br}\n33{aver_spo2}\n 44{room_id_list} ")
-    #make_averdata_to_excel(aver_hr, aver_br, aver_spo2,room_id_list)
-     # At 9:10 save all hospital data
-    # Keep the main thread alive so the scheduler can run
-    schedule.every().day.at("09:10").do(save_all_hospital_data)
-    thread = threading.Thread(target=run_scheduler)
-    thread.daemon = True
-    thread.start()
-
-    
-
+# command를 받아서 데이터를 저장 및 평균 계산
     
     while True:
-        command = input("명령어를 입력하세요 (command 입력 시 데이터 다운로드) (exit 입력 시 종료): ").strip()
+        command = input("명령어를 입력하세요 (command : 데이터 다운로드 , average : 평균 계산) (exit 입력 시 종료): ").strip()
         if command == "command":
             save_input_hospital_data()
-            command = input("명령어를 입력하세요 (average 입력 시 호실별 평균 계산산) (exit 입력 시 종료): ").strip()
-            if command == "average":
-                aver_hr, aver_br, aver_spo2 , room_id_list= get_average_from_custom_folder()
-                # 엑셀에 저장하는 함수
-                make_averdata_to_excel(aver_hr, aver_br, aver_spo2,room_id_list)
+            command = input("명령어를 입력하세요 (average 입력 시 호실별 평균 계산) (exit 입력 시 종료): ").strip()
+        if command == "average":
+            aver_hr, aver_br, aver_spo2 , room_id_list= get_average_from_custom_folder()
+            # 엑셀에 저장하는 함수
+            make_averdata_to_excel(aver_hr, aver_br, aver_spo2,room_id_list)
         elif command == "exit":
             print("프로그램 종료 중...")
             break
