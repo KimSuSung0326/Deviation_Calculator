@@ -45,13 +45,17 @@ def get_average_data():
     for filename in os.listdir(json_dir):
         if filename.endswith(".json"):
             hospital_name = filename.split('_')[0].upper()
-
+            hospital_floor = filename.split('_')[3].split('.')[0]
             results = {
                 "08:00": {"hr": [], "breath": [], "spo2": [], "rooms": []},
                 "16:00": {"hr": [], "breath": [], "spo2": [], "rooms": []},
             }
 
-            hospital_base_dir = os.path.join(data_dir, hospital_name)
+            hospital_base_dir = os.path.join(data_dir, hospital_name) # HospitalData/YN
+
+            if hospital_floor: #floor가 존재한다면 
+                hospital_base_dir = os.path.join(data_dir, hospital_name, hospital_floor)
+
             today_date_dir = os.path.join(hospital_base_dir, today_str)
 
             if not os.path.isdir(today_date_dir):
@@ -64,13 +68,13 @@ def get_average_data():
                 if not data_file.endswith(".csv"):
                     continue
 
-                print(f"[{hospital_name}] 처리 중: {data_file}")
+                print(f"[{hospital_name}_{hospital_floor}] 처리 중: {data_file}")
 
-                match = re.search(r"^\d+\.\d+\.\d+_(\d+)_(\d+)_", data_file)
+                match = re.search(r"^(\d+_\d+)_", data_file)
                 if match:
-                    room_id = f"{match.group(1)}_{match.group(2)}"
+                    room_id = match.group(1)
                 else:
-                    print(f"[{hospital_name}] 파일명에서 room_id 추출 실패: {data_file}")
+                    print(f"[{hospital_name}_{hospital_floor}] 파일명에서 room_id 추출 실패: {data_file}")
                     continue
 
                 file_path = os.path.join(today_date_dir, data_file)
@@ -122,7 +126,11 @@ def get_average_data():
 
                     print(f"[{hospital_name}] [{time_key}] {room_id} → HR: {avg_hr}, BR: {avg_breath}, SPO2: {avg_spo2}")
 
-            hospital_results[hospital_name] = results
+            hospital_results[hospital_name] = {
+                "floor": hospital_floor,
+                "08:00": results["08:00"],
+                "16:00": results["16:00"]
+            }
 
     return hospital_results
 
@@ -233,7 +241,9 @@ def make_scheduler_averdata_to_excel_by_hospital(hospital_results):
     for hospital_name, results in hospital_results.items():
         data_rows = []
 
-        for time_key in results:
+        hospital_floor = results["floor"]  # 층 정보 가져오기
+
+        for time_key in ["08:00", "16:00"]:
             for i in range(len(results[time_key]['rooms'])):
                 data_rows.append({
                     "시간대": time_key,
@@ -244,8 +254,11 @@ def make_scheduler_averdata_to_excel_by_hospital(hospital_results):
                 })
 
         df = pd.DataFrame(data_rows)
+
         filename = f"{hospital_name}_averdata.xlsx"
-        df.to_excel(filename, index=False)
+        if hospital_floor:
+            filename = f"{hospital_name}_{hospital_floor}_averdata.xlsx"
+        df.to_excel(filename, index=True)
         print(f"[{hospital_name}] 엑셀 저장 완료: {filename}")
 
 
@@ -269,7 +282,7 @@ def fetch_prometheus_metrics(job_name, metrics, start_time, end_time, step=10, t
     import pandas as pd
     from datetime import timezone, timedelta
 
-    query_url = 'https://3iztvmb7bj.execute-api.ap-northeast-2.amazonaws.com/prometheus/v1/query_range'
+    query_url = ''
     kst = timezone(timedelta(hours=timezone_offset))
 
     start = int(start_time.timestamp())
@@ -323,7 +336,7 @@ def fetch_prometheus_metrics(job_name, metrics, start_time, end_time, step=10, t
         print("데이터가 없습니다.")
         return None
     
-#9시 10분 마다 데이터 저장 함수
+#16시 10분 마다 데이터 저장 함수
 def save_all_hospital_data():
     today_str = datetime.now().strftime("%Y-%m-%d")
     # 엑셀 데이터 저장 경로 설정
@@ -339,11 +352,17 @@ def save_all_hospital_data():
         if filename.endswith(".json"):
             file_path = os.path.join(uid_dir, filename)
 
-            # 병원명 추출 (예: 'Yn_Uid_Filename.json' → 'Yn')
+            # 병원명 추출 (예: 'yn_uid_list_2.json' → 'Yn')
             hospital_name = filename.split('_')[0].upper()  # 대문자로 통일: 'YN', 'HYO', 'JJ' 등
+            hospital_floor = filename.split('_')[3].split('.')[0] # 층만 출력 (yn 일때만 사용)
 
-            # 저장 경로 구성
-            base_path = os.path.join(script_dir, "HospitalData", hospital_name, today_str)
+            # 저장 경로 구성(기본 저장 경로 HospitalData/병원 이름/오늘 날짜 , floor존재시 추가)
+            base_path = os.path.join(script_dir,"HospitalData",hospital_name)
+
+            if hospital_floor:
+                base_path = os.path.join(script_dir,"HospitalData",hospital_name,hospital_floor)
+
+            base_path = os.path.join(script_dir,"HospitalData",hospital_name,hospital_floor,today_str)
             os.makedirs(base_path, exist_ok=True)
 
             # JSON 데이터 로드
@@ -362,12 +381,12 @@ def save_all_hospital_data():
                 )
 
                 # 엑셀로 데이터 저장
-                df.to_csv(os.path.join(base_path, f"{year}.{month}.{day}_{room_id}_{uid_value}.csv"))
+                df.to_csv(os.path.join(base_path, f"{room_id}_{uid_value}.csv"))
 
-    # scheduler를 통해 받아온 데이터 평균 계산
-    results = get_average_data()
-    # 엑셀 파일로 저장
-    make_scheduler_averdata_to_excel_by_hospital(results)
+        # scheduler를 통해 받아온 데이터 평균 계산
+        results = get_average_data()
+        # 엑셀 파일로 저장
+        make_scheduler_averdata_to_excel_by_hospital(results)
 
 # 입력 시간으로 데이터를 추출 및 저장하는 함수
 def save_input_hospital_data():
@@ -474,7 +493,7 @@ if __name__ == "__main__":
    
     # At 16:10 save all hospital data
     # Keep the main thread alive so the scheduler can run
-    schedule.every().day.at("17:49").do(save_all_hospital_data)
+    schedule.every().day.at("11:40").do(save_all_hospital_data)
     thread = threading.Thread(target=run_scheduler)
     thread.daemon = True
     thread.start()
