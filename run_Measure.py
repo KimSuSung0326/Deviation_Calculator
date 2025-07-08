@@ -12,6 +12,12 @@ from openpyxl import load_workbook
 from openpyxl.styles import Border, Side
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.styles import Border, Side
+from datetime import datetime
+from collections import defaultdict
+
 now = datetime.now()
 year = now.year
 month = now.month
@@ -45,13 +51,17 @@ def get_average_data():
     for filename in os.listdir(json_dir):
         if filename.endswith(".json"):
             hospital_name = filename.split('_')[0].upper()
-
+            hospital_floor = filename.split('_')[3].split('.')[0]
             results = {
                 "08:00": {"hr": [], "breath": [], "spo2": [], "rooms": []},
                 "16:00": {"hr": [], "breath": [], "spo2": [], "rooms": []},
             }
 
-            hospital_base_dir = os.path.join(data_dir, hospital_name)
+            hospital_base_dir = os.path.join(data_dir, hospital_name) # HospitalData/YN
+
+            if hospital_floor: #floor가 존재한다면 
+                hospital_base_dir = os.path.join(data_dir, hospital_name, hospital_floor)
+
             today_date_dir = os.path.join(hospital_base_dir, today_str)
 
             if not os.path.isdir(today_date_dir):
@@ -64,13 +74,13 @@ def get_average_data():
                 if not data_file.endswith(".csv"):
                     continue
 
-                print(f"[{hospital_name}] 처리 중: {data_file}")
+                print(f"[{hospital_name}_{hospital_floor}] 처리 중: {data_file}")
 
-                match = re.search(r"^\d+\.\d+\.\d+_(\d+)_(\d+)_", data_file)
+                match = re.search(r"^(\d+_\d+)_", data_file)
                 if match:
-                    room_id = f"{match.group(1)}_{match.group(2)}"
+                    room_id = match.group(1)
                 else:
-                    print(f"[{hospital_name}] 파일명에서 room_id 추출 실패: {data_file}")
+                    print(f"[{hospital_name}_{hospital_floor}] 파일명에서 room_id 추출 실패: {data_file}")
                     continue
 
                 file_path = os.path.join(today_date_dir, data_file)
@@ -122,7 +132,11 @@ def get_average_data():
 
                     print(f"[{hospital_name}] [{time_key}] {room_id} → HR: {avg_hr}, BR: {avg_breath}, SPO2: {avg_spo2}")
 
-            hospital_results[hospital_name] = results
+            hospital_results[hospital_name] = {
+                "floor": hospital_floor,
+                "08:00": results["08:00"],
+                "16:00": results["16:00"]
+            }
 
     return hospital_results
 
@@ -228,12 +242,14 @@ def make_averdata_to_excel(avr_heart, avr_breath, avr_spo2, room_id, filename="a
     print(f"{filename} 파일에 저장 완료")
 
     # excel 스타일 만들기
-
+'''
 def make_scheduler_averdata_to_excel_by_hospital(hospital_results):
     for hospital_name, results in hospital_results.items():
         data_rows = []
 
-        for time_key in results:
+        hospital_floor = results["floor"]  # 층 정보 가져오기
+
+        for time_key in ["08:00", "16:00"]:
             for i in range(len(results[time_key]['rooms'])):
                 data_rows.append({
                     "시간대": time_key,
@@ -244,10 +260,198 @@ def make_scheduler_averdata_to_excel_by_hospital(hospital_results):
                 })
 
         df = pd.DataFrame(data_rows)
-        filename = f"{hospital_name}_averdata.xlsx"
-        df.to_excel(filename, index=False)
-        print(f"[{hospital_name}] 엑셀 저장 완료: {filename}")
 
+        filename = f"{hospital_name}_averdata.xlsx"
+        if hospital_floor:
+            filename = f"{hospital_name}_{hospital_floor}_averdata.xlsx"
+        df.to_excel(filename, index=True)
+        print(f"[{hospital_name}] 엑셀 저장 완료: {filename}")
+'''
+def sanitize_sheet_title(title):
+    # Excel에서 허용되지 않는 문자 제거
+    for char in ['\\', '/', '*', '[', ']', ':', '?']:
+        title = title.replace(char, '_')
+    return title[:31]  # Excel 시트명은 31자 제한 있음
+
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+from openpyxl.utils import get_column_letter
+from datetime import datetime
+import os
+
+def sanitize_sheet_title(title):
+    return title.replace("/", "_").replace("\\", "_")
+
+def _get_value_by_room(results, time_key, metric, room_id):
+    return results.get(time_key, {}).get(metric, {}).get(room_id)
+
+def write_heart_rate_excel_by_sheet(
+    hospital_results,
+    filename="심박수_전체요약_확장.xlsx",
+    titles=["심박수", "호흡수", "산소포화도"],
+    date_str=None
+):
+    thin_border = Border(
+        left=Side(style='thin', color='000000'),
+        right=Side(style='thin', color='000000'),
+        top=Side(style='thin', color='000000'),
+        bottom=Side(style='thin', color='000000')
+    )
+
+    if os.path.exists(filename):
+        wb = load_workbook(filename)
+    else:
+        wb = Workbook()
+        if "Sheet" in wb.sheetnames:
+            wb.remove(wb["Sheet"])
+
+    if date_str is None:
+        date_str = datetime.now().strftime("%m/%d")
+
+    metric_keys = ["hr", "breath", "spo2"]
+    group_width = 6
+    data_start_col = 4  # D열부터 시작
+
+    for hospital_name, results in hospital_results.items():
+        floor = results.get("floor", "층미지정")
+        sheet_title = sanitize_sheet_title(f"{hospital_name}_{floor}")
+
+        if sheet_title not in wb.sheetnames:
+            ws = wb.create_sheet(title=sheet_title)
+
+            # A1~C1 제목
+            headers = ["병실", "침대", "환자명"]
+            for col_idx, header in enumerate(headers, start=1):
+                cell = ws.cell(row=1, column=col_idx, value=header)
+                cell.font = Font(bold=True)
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = thin_border
+                ws.column_dimensions[get_column_letter(col_idx)].width = 10
+
+            # 심박/호흡/산소포화도 타이틀 및 헤더
+            for i, title in enumerate(titles):
+                offset = i * group_width + data_start_col
+
+                # 제목
+                ws.merge_cells(start_row=1, start_column=offset, end_row=1, end_column=offset + 5)
+                cell = ws.cell(row=1, column=offset, value=title)
+                cell.font = Font(bold=True, size=14)
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = thin_border
+
+                # 날짜
+                ws.merge_cells(start_row=2, start_column=offset, end_row=2, end_column=offset + 5)
+                cell = ws.cell(row=2, column=offset, value=date_str)
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = thin_border
+
+                # 그룹명
+                ws.merge_cells(start_row=3, start_column=offset, end_row=3, end_column=offset + 1)
+                ws.cell(row=3, column=offset, value="간호사").alignment = Alignment(horizontal="center")
+                ws.cell(row=3, column=offset).font = Font(bold=True)
+                ws.cell(row=3, column=offset).border = thin_border
+
+                ws.merge_cells(start_row=3, start_column=offset + 2, end_row=3, end_column=offset + 3)
+                ws.cell(row=3, column=offset + 2, value="장비").alignment = Alignment(horizontal="center")
+                ws.cell(row=3, column=offset + 2).font = Font(bold=True)
+                ws.cell(row=3, column=offset + 2).border = thin_border
+
+                ws.merge_cells(start_row=3, start_column=offset + 4, end_row=3, end_column=offset + 5)
+                ws.cell(row=3, column=offset + 4, value="편차").alignment = Alignment(horizontal="center")
+                ws.cell(row=3, column=offset + 4).font = Font(bold=True)
+                ws.cell(row=3, column=offset + 4).border = thin_border
+
+                # 4행 시간 헤더
+                time_headers = ["8시", "16시"] * 3
+                for j, h in enumerate(time_headers):
+                    col = offset + j
+                    cell = ws.cell(row=4, column=col, value=h)
+                    cell.font = Font(bold=True)
+                    cell.alignment = Alignment(horizontal="center")
+                    cell.border = thin_border
+                    if j >= 4:
+                        cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+
+        else:
+            ws = wb[sheet_title]
+
+        # 모든 병실 ID 수집
+        rooms_8 = results["08:00"].get("rooms", [])
+        rooms_16 = results["16:00"].get("rooms", [])
+        all_rooms = sorted(set(rooms_8 + rooms_16))
+
+        room_data = []
+        for room_id in all_rooms:
+            match = re.match(r"(\d+)[\-_](\d+)", room_id)
+            if match:
+                room, bed = match.groups()
+                bed = str(int(bed))  # "01" → "1"
+            else:
+                room = room_id
+                bed = "1"
+            room_data.append((room, bed, room_id))
+
+        # 병실 병합용 딕셔너리
+        room_rows = defaultdict(list)
+        for idx, (room, bed, room_id) in enumerate(room_data):
+            row = idx + 5
+            room_rows[room].append(row)
+
+            # 병실, 침대, 환자명
+            ws.cell(row=row, column=1, value=room).border = thin_border
+            ws.cell(row=row, column=2, value=bed).border = thin_border
+            ws.cell(row=row, column=3, value="").border = thin_border
+
+            # 측정 데이터
+            for i, metric in enumerate(metric_keys):
+                offset = i * group_width + data_start_col
+                col1 = offset
+                col2 = offset + 1
+                col3 = offset + 2
+                col4 = offset + 3
+                col5 = offset + 4
+                col6 = offset + 5
+
+                # 간호사 입력
+                ws.cell(row=row, column=col1).border = thin_border
+                ws.cell(row=row, column=col2).border = thin_border
+
+                # 장비 데이터
+                val_8 = _get_value_by_room(results, "08:00", metric, room_id)
+                val_16 = _get_value_by_room(results, "16:00", metric, room_id)
+                ws.cell(row=row, column=col3, value=val_8).border = thin_border
+                ws.cell(row=row, column=col4, value=val_16).border = thin_border
+
+                # 편차 계산 수식
+                formula1 = f"={ws.cell(row=row, column=col1).coordinate}-{ws.cell(row=row, column=col3).coordinate}"
+                formula2 = f"={ws.cell(row=row, column=col2).coordinate}-{ws.cell(row=row, column=col4).coordinate}"
+
+                ws.cell(row=row, column=col5, value=formula1).border = thin_border
+                ws.cell(row=row, column=col5).fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+
+                ws.cell(row=row, column=col6, value=formula2).border = thin_border
+                ws.cell(row=row, column=col6).fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+
+        # 병실 병합
+        for room, rows in room_rows.items():
+            if len(rows) > 1:
+                ws.merge_cells(start_row=rows[0], start_column=1, end_row=rows[-1], end_column=1)
+
+    wb.save(filename)
+    print(f"[완료] 엑셀 저장됨: {filename}")
+
+
+def _get_value_by_room(results, time_key, metric, room_id):
+    """room_id에 맞는 값 찾기, 없으면 0 반환"""
+    try:
+        rooms = results[time_key]["rooms"]
+        metric_list = results[time_key][metric]
+        if room_id in rooms:
+            idx = rooms.index(room_id)
+            return metric_list[idx] if idx < len(metric_list) else 0
+    except (KeyError, IndexError):
+        pass
+    return 0
 
 def fetch_prometheus_metrics(job_name, metrics, start_time, end_time, step=10, timezone_offset=9, output_csv=None, room_id=None):
     """
@@ -323,7 +527,7 @@ def fetch_prometheus_metrics(job_name, metrics, start_time, end_time, step=10, t
         print("데이터가 없습니다.")
         return None
     
-#9시 10분 마다 데이터 저장 함수
+#16시 10분 마다 데이터 저장 함수
 def save_all_hospital_data():
     today_str = datetime.now().strftime("%Y-%m-%d")
     # 엑셀 데이터 저장 경로 설정
@@ -339,11 +543,17 @@ def save_all_hospital_data():
         if filename.endswith(".json"):
             file_path = os.path.join(uid_dir, filename)
 
-            # 병원명 추출 (예: 'Yn_Uid_Filename.json' → 'Yn')
+            # 병원명 추출 (예: 'yn_uid_list_2.json' → 'Yn')
             hospital_name = filename.split('_')[0].upper()  # 대문자로 통일: 'YN', 'HYO', 'JJ' 등
+            hospital_floor = filename.split('_')[3].split('.')[0] # 층만 출력 (yn 일때만 사용)
 
-            # 저장 경로 구성
-            base_path = os.path.join(script_dir, "HospitalData", hospital_name, today_str)
+            # 저장 경로 구성(기본 저장 경로 HospitalData/병원 이름/오늘 날짜 , floor존재시 추가)
+            base_path = os.path.join(script_dir,"HospitalData",hospital_name)
+
+            if hospital_floor:
+                base_path = os.path.join(script_dir,"HospitalData",hospital_name,hospital_floor)
+
+            base_path = os.path.join(script_dir,"HospitalData",hospital_name,hospital_floor,today_str)
             os.makedirs(base_path, exist_ok=True)
 
             # JSON 데이터 로드
@@ -362,12 +572,13 @@ def save_all_hospital_data():
                 )
 
                 # 엑셀로 데이터 저장
-                df.to_csv(os.path.join(base_path, f"{year}.{month}.{day}_{room_id}_{uid_value}.csv"))
+                df.to_csv(os.path.join(base_path, f"{room_id}_{uid_value}.csv"))
 
-    # scheduler를 통해 받아온 데이터 평균 계산
-    results = get_average_data()
-    # 엑셀 파일로 저장
-    make_scheduler_averdata_to_excel_by_hospital(results)
+        # scheduler를 통해 받아온 데이터 평균 계산
+        results = get_average_data()
+        # 엑셀 파일로 저장
+        #make_scheduler_averdata_to_excel_by_hospital(results)
+        write_heart_rate_excel_by_sheet(results)
 
 # 입력 시간으로 데이터를 추출 및 저장하는 함수
 def save_input_hospital_data():
@@ -474,7 +685,7 @@ if __name__ == "__main__":
    
     # At 16:10 save all hospital data
     # Keep the main thread alive so the scheduler can run
-    schedule.every().day.at("17:49").do(save_all_hospital_data)
+    schedule.every().day.at("18:40").do(save_all_hospital_data)
     thread = threading.Thread(target=run_scheduler)
     thread.daemon = True
     thread.start()
