@@ -136,8 +136,3 @@ avg_over_time(metric_name{job="hyo/uid123"}[10s])
 - `http://your-prometheus-url`을 실제 주소로 변경해야 합니다 (코드 상에 설정 필요).
 
 ---
-
-## 📄 라이선스
-
-MIT License  
-© 2025 YourName or YourTeam
