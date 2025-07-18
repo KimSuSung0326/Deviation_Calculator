@@ -526,7 +526,7 @@ def fetch_prometheus_metrics(job_name, metrics, start_time, end_time, step=10, t
     """
   
 
-    query_url = 'https://3iztvmb7bj.execute-api.ap-northeast-2.amazonaws.com/prometheus/v1/query_range'
+    query_url = ''
     kst = timezone(timedelta(hours=timezone_offset))
 
     start = int(start_time.timestamp())
